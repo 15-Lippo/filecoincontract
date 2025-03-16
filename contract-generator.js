@@ -160,6 +160,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function generateERC20Contract(name, symbol, decimals, initialSupply, ownerAddress) {
         // Calculate the initial supply with decimals
         const supplyWithDecimals = initialSupply * (10 ** decimals);
+        const formattedOwnerAddress = ownerAddress.startsWith('0x') ? ownerAddress : '0xYourAddressHere';
 
         return `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
@@ -171,17 +172,17 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  * @title ${name}
  * @dev Implementation of the ${name} token on Filecoin.
  */
-contract ${name.replace(/\s+/g, '')} is ERC20, Ownable {
-    uint8 private _decimals;
-
+contract ${name.replace(/\s+/g, '')} is ERC20("${name}", "${symbol}"), Ownable(${formattedOwnerAddress}) {
+    uint8 private _decimals = ${decimals};
+    uint256 private constant INITIAL_SUPPLY = ${supplyWithDecimals.toString().replace('+', '')}; // Using explicit number representation instead of scientific notation
+    
     /**
-     * @dev Constructor that gives _msgSender() all of existing tokens.
+     * @dev Constructor that gives msg.sender all of existing tokens.
      */
-    constructor() ERC20("${name}", "${symbol}") {
-        _decimals = ${decimals};
-        
+    constructor() {
         // Mint initial supply to the owner
-        _mint(${ownerAddress.startsWith('0x') ? ownerAddress : '"' + ownerAddress + '"'}, ${supplyWithDecimals.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "_")});
+        address owner = ${formattedOwnerAddress};
+        _mint(owner, INITIAL_SUPPLY);
     }
     
     /**
@@ -207,7 +208,7 @@ contract ${name.replace(/\s+/g, '')} is ERC20, Ownable {
      * @param amount The amount of tokens to burn.
      */
     function burn(uint256 amount) public {
-        _burn(_msgSender(), amount);
+        _burn(msg.sender, amount);
     }
 }`;
     }
@@ -470,13 +471,10 @@ contract ${name.replace(/\s+/g, '')} is ERC20, Ownable {
         
         openInRemixButton.addEventListener('click', function() {
             // Properly encode the contract for URL compatibility
-            const fileName = `${tokenName.replace(/\s+/g, '')}.sol`;
             const base64Contract = btoa(unescape(encodeURIComponent(contractCode)));
             
             // Create a complete URL with optimization and compiler settings pre-configured
-            const remixURL = `https://remix.ethereum.org/#code=${base64Contract}&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.26+commit.8a97fa7a.js&language=Solidity&autoCompile=true&deploy=true&evmVersion=null`;
-            
-            // Open Remix in a new tab with contract code pre-loaded
+            const remixURL = `https://remix.ethereum.org/#lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.26+commit.8a97fa7a.js&code=${base64Contract}`;
             window.open(remixURL, '_blank');
             
             // Show network configuration instructions specific to Filecoin
@@ -507,43 +505,52 @@ contract ${name.replace(/\s+/g, '')} is ERC20, Ownable {
             remixContainer.appendChild(instructionsDiv);
         });
         
-        // Auto-compile & deploy button directly for Filecoin
-        const autoDeployButton = document.createElement('button');
-        autoDeployButton.textContent = 'Direct Deploy to Remix';
-        autoDeployButton.className = 'remix-button';
-        autoDeployButton.style.backgroundColor = '#4CAF50';
-        autoDeployButton.style.display = 'block';
-        autoDeployButton.style.margin = '20px auto';
+        // Direct deploy button with auto-compile and connect
+        const directDeployButton = document.createElement('button');
+        directDeployButton.textContent = 'Direct Deploy on Remix';
+        directDeployButton.className = 'remix-button';
+        directDeployButton.style.backgroundColor = '#4CAF50';
+        directDeployButton.style.display = 'block';
+        directDeployButton.style.margin = '20px auto';
         
-        autoDeployButton.addEventListener('click', function() {
-            // This will encode the contract and open Remix with auto-compile settings
+        directDeployButton.addEventListener('click', function() {
+            const contractName = tokenName.replace(/\s+/g, '');
             const base64Contract = btoa(unescape(encodeURIComponent(contractCode)));
             
-            // URL with auto-compile, auto-connect to injected provider and deploy panel open
-            const directDeployURL = `https://remix.ethereum.org/#code=${base64Contract}&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.26+commit.8a97fa7a.js&language=Solidity&autoCompile=true&deploy=true&evmVersion=null`;
+            // URL parameters for auto-compilation and deployment panel
+            const params = new URLSearchParams({
+                optimize: 'false',
+                runs: '200',
+                evmVersion: 'null',
+                version: 'soljson-v0.8.26+commit.8a97fa7a.js',
+                autoCompile: 'true',
+                hideWarnings: 'false'
+            });
             
-            window.open(directDeployURL, '_blank');
+            // Create URL with embedded code and settings
+            const remixURL = `https://remix.ethereum.org/#language=solidity&${params.toString()}&code=${base64Contract}`;
+            window.open(remixURL, '_blank');
             
             // Show deployment confirmation
             const deploymentMessage = document.createElement('div');
             deploymentMessage.className = 'success-banner';
             deploymentMessage.style.margin = '20px 0';
             deploymentMessage.innerHTML = `
-                <h4>Contract Sent to Remix IDE</h4>
-                <p>Your contract has been opened in Remix IDE.</p>
-                <p>Please complete these steps in the new tab:</p>
+                <h4>Contract Ready for Deployment</h4>
+                <p>Your contract has been opened in Remix IDE and will auto-compile.</p>
+                <p>To deploy on Filecoin:</p>
                 <ol>
-                    <li>Go to the Solidity Compiler tab and click "Compile"</li>
-                    <li>Switch to "Deploy & Run Transactions" tab</li>
-                    <li>Set Environment to "Injected Provider - MetaMask"</li>
-                    <li>Click "Deploy" to create your token</li>
+                    <li>In the "Deploy & Run" tab, select "Injected Provider - MetaMask"</li>
+                    <li>Ensure MetaMask is connected to Filecoin (Chain ID: 314159)</li>
+                    <li>Select "${contractName}" from the contract dropdown</li>
+                    <li>Click "Deploy" and confirm the transaction in MetaMask</li>
                 </ol>
             `;
             remixContainer.appendChild(deploymentMessage);
         });
         
         remixContainer.appendChild(openInRemixButton);
-        remixContainer.appendChild(autoDeployButton);
+        remixContainer.appendChild(directDeployButton);
     }
 
     // Add direct deploy button to the UI
