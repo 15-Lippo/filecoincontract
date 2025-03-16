@@ -1,0 +1,514 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Filecoin ERC-20 Creator & VM</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/remix-ide@latest/dist/remix-ide.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remix-ide@latest/dist/css/remix-ide.css">
+    <script type="module">
+        import { ethers } from 'https://cdn.ethers.io/lib/ethers-5.2.esm.min.js';
+
+        class FilecoinWalletConnection {
+            constructor() {
+                this.provider = null;
+                this.signer = null;
+                this.account = null;
+            }
+
+            async connectWallet() {
+                try {
+                    // Comprehensive wallet connection
+                    if (typeof window.ethereum === 'undefined') {
+                        this.handleWalletNotDetected();
+                        return null;
+                    }
+
+                    // Request accounts with detailed error handling
+                    const accounts = await this.requestAccounts();
+                    
+                    if (!accounts || accounts.length === 0) {
+                        throw new Error('No accounts retrieved');
+                    }
+
+                    this.account = accounts[0];
+                    
+                    // Switch to Filecoin network with improved network detection
+                    await this.switchToFilecoinNetwork();
+
+                    // Log connection details
+                    console.log('Connected Account:', this.account);
+
+                    // Update UI
+                    this.updateWalletStatus();
+
+                    return this.account;
+
+                } catch (error) {
+                    console.error('Wallet Connection Error:', error);
+                    this.handleConnectionError(error);
+                    return null;
+                }
+            }
+
+            async requestAccounts() {
+                try {
+                    // More comprehensive account request with multiple fallback methods
+                    const accounts = await window.ethereum.request({ 
+                        method: 'eth_requestAccounts' 
+                    });
+                    
+                    // Validate accounts
+                    if (!accounts || accounts.length === 0) {
+                        // Try alternative methods if primary request fails
+                        const alternativeAccounts = await window.ethereum.send('eth_accounts');
+                        
+                        if (!alternativeAccounts || alternativeAccounts.length === 0) {
+                            throw new Error('No Ethereum accounts found');
+                        }
+                        
+                        return alternativeAccounts;
+                    }
+
+                    return accounts;
+                } catch (error) {
+                    console.error('Account request failed:', error);
+                    throw error;
+                }
+            }
+
+            async switchToFilecoinNetwork() {
+                const filecoinNetworks = {
+                    mainnet: {
+                        chainId: '0x13A', // 314 in hex
+                        chainName: 'Filecoin Mainnet',
+                        nativeCurrency: {
+                            name: 'FIL',
+                            symbol: 'FIL',
+                            decimals: 18
+                        },
+                        rpcUrls: ['https://api.node.glif.io/rpc/v1'],
+                        blockExplorerUrls: ['https://filscan.io/']
+                    },
+                    calibration: {
+                        chainId: '0x4CB', // 314159 in hex
+                        chainName: 'Filecoin Calibration Testnet',
+                        nativeCurrency: {
+                            name: 'tFIL',
+                            symbol: 'tFIL',
+                            decimals: 18
+                        },
+                        rpcUrls: ['https://api.calibration.node.glif.io/rpc/v1'],
+                        blockExplorerUrls: ['https://calibration.filscan.io/']
+                    }
+                };
+
+                const selectedNetwork = document.getElementById('deployment-network').value || 'calibration';
+                const networkParams = filecoinNetworks[selectedNetwork];
+
+                try {
+                    // First, try to switch network
+                    await window.ethereum.request({
+                        method: 'wallet_switchEthereumChain',
+                        params: [{ chainId: networkParams.chainId }]
+                    });
+                } catch (switchError) {
+                    // If the chain hasn't been added, add it
+                    if (switchError.code === 4902) {
+                        await window.ethereum.request({
+                            method: 'wallet_addEthereumChain',
+                            params: [networkParams]
+                        });
+                    } else {
+                        console.error('Network switch failed:', switchError);
+                    }
+                }
+            }
+
+            handleWalletNotDetected() {
+                const message = 'MetaMask not detected. Please install MetaMask.';
+                alert(message);
+                this.updateWalletStatus(message);
+                window.open('https://metamask.io/download/', '_blank');
+            }
+
+            handleConnectionError(error) {
+                console.error('Wallet Connection Error:', error);
+                
+                const errorMessages = {
+                    4001: 'Connection request was rejected by user',
+                    '-32002': 'Connection request already in progress',
+                    default: 'Failed to connect wallet'
+                };
+
+                const errorMessage = errorMessages[error.code] || errorMessages.default;
+                this.updateWalletStatus(errorMessage);
+                
+                // More detailed user feedback
+                const detailedErrorMessage = `
+                    Wallet Connection Failed:
+                    - Ensure MetaMask is installed
+                    - Check network settings
+                    - Verify account permissions
+                    Error: ${errorMessage}
+                `;
+                
+                alert(detailedErrorMessage);
+            }
+
+            updateWalletStatus(errorMessage = null) {
+                const walletStatus = document.getElementById('wallet-status');
+                const connectButton = document.getElementById('connect-wallet-button');
+                const createTokenButton = document.getElementById('create-token-button');
+                const ownerAddressInput = document.getElementById('owner-address');
+
+                if (this.account) {
+                    walletStatus.textContent = `Connected: ${this.shortenAddress(this.account)}`;
+                    walletStatus.classList.add('connected');
+                    connectButton.textContent = 'Connected';
+                    connectButton.disabled = true;
+                    createTokenButton.classList.remove('hidden');
+                    ownerAddressInput.value = this.account;
+                } else {
+                    walletStatus.textContent = errorMessage || 'Not connected';
+                    walletStatus.classList.remove('connected');
+                    connectButton.textContent = 'Connect Wallet';
+                    connectButton.disabled = false;
+                    createTokenButton.classList.add('hidden');
+                    ownerAddressInput.value = '';
+                }
+            }
+
+            shortenAddress(address) {
+                return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+            }
+
+            async setupListeners() {
+                if (window.ethereum) {
+                    window.ethereum.on('accountsChanged', (accounts) => {
+                        console.log('Accounts changed:', accounts);
+                        if (accounts.length > 0) {
+                            this.account = accounts[0];
+                            this.updateWalletStatus();
+                        } else {
+                            this.updateWalletStatus('Wallet disconnected');
+                        }
+                    });
+
+                    window.ethereum.on('chainChanged', () => {
+                        window.location.reload();
+                    });
+                }
+            }
+
+            async checkInitialConnection() {
+                if (window.ethereum) {
+                    try {
+                        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+                        console.log('Initial accounts:', accounts);
+                        if (accounts.length > 0) {
+                            this.account = accounts[0];
+                            await this.connectWallet();
+                        }
+                    } catch (error) {
+                        console.error('Initial connection check failed:', error);
+                    }
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const walletConnection = new FilecoinWalletConnection();
+            
+            const connectButton = document.getElementById('connect-wallet-button');
+            connectButton.addEventListener('click', async () => {
+                try {
+                    await walletConnection.connectWallet();
+                } catch (error) {
+                    console.error('Connection attempt failed:', error);
+                }
+            });
+
+            walletConnection.checkInitialConnection();
+            walletConnection.setupListeners();
+
+            // Expose methods globally if needed
+            window.walletConnection = walletConnection;
+        });
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>Filecoin ERC-20 Token Creator</h1>
+        
+        <div class="info-banner">
+            <p><strong>Note:</strong> This tool helps you generate smart contract code that you can deploy elsewhere. It doesn't deploy contracts directly but gives you ready-to-use code for platforms like Remix IDE or Hardhat.</p>
+        </div>
+        
+        <div id="contract-container">
+            <div class="form-section">
+                <h2>Create Your ERC-20 Token</h2>
+                
+                <div class="wallet-section">
+                    <div id="wallet-status">Not connected</div>
+                    <button id="connect-wallet-button">Connect Wallet</button>
+                </div>
+                
+                <div class="form-content">
+                    <div class="token-preview">
+                        <div class="token-logo-container">
+                            <div id="token-logo-preview">
+                                <svg id="default-logo" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                                    <circle cx="50" cy="50" r="45" fill="#0090ff" />
+                                    <text x="50" y="50" font-size="40" text-anchor="middle" dominant-baseline="middle" fill="white" font-family="Arial, sans-serif" font-weight="bold" id="logo-text">FIL</text>
+                                </svg>
+                                <img id="custom-logo" class="hidden" alt="Token Logo">
+                            </div>
+                            <div class="logo-upload">
+                                <label for="logo-file" class="upload-button">Upload Logo</label>
+                                <input type="file" id="logo-file" accept="image/*" class="hidden">
+                                <button id="remove-logo" class="hidden">Remove</button>
+                            </div>
+                        </div>
+                        <div class="token-preview-info">
+                            <div id="preview-name">My Token</div>
+                            <div id="preview-symbol">MTK</div>
+                        </div>
+                    </div>
+                
+                    <div class="form-group">
+                        <label for="token-name">Token Name:</label>
+                        <input type="text" id="token-name" placeholder="My Token">
+                    </div>
+                    <div class="form-group">
+                        <label for="token-symbol">Token Symbol:</label>
+                        <input type="text" id="token-symbol" placeholder="MTK">
+                    </div>
+                    <div class="form-group">
+                        <label for="token-decimals">Decimals:</label>
+                        <input type="number" id="token-decimals" value="18" min="0" max="18">
+                    </div>
+                    <div class="form-group">
+                        <label for="initial-supply">Initial Supply:</label>
+                        <input type="number" id="initial-supply" value="1000000" min="1">
+                    </div>
+                    <div class="form-group">
+                        <label for="owner-address">Owner Address:</label>
+                        <input type="text" id="owner-address" placeholder="0x...">
+                    </div>
+                    <div class="form-group">
+                        <label for="deployment-network">Deployment Network:</label>
+                        <select id="deployment-network">
+                            <option value="mainnet">Filecoin Mainnet</option>
+                            <option value="calibration">Calibration Testnet</option>
+                        </select>
+                    </div>
+                    <button id="generate-button">Generate Smart Contract</button>
+                    <button id="create-token-button" class="hidden">Create Token with MetaMask</button>
+                    
+                    <div id="deployment-status-container" class="deployment-live-status hidden">
+                        <h3>Live Deployment Status</h3>
+                        <div id="live-deployment-status">Preparing deployment...</div>
+                    </div>
+                    
+                    <div id="deployment-result-container" class="deployment-result hidden">
+                        <div class="success-banner">
+                            <svg class="success-icon" viewBox="0 0 24 24" width="24" height="24">
+                                <circle cx="12" cy="12" r="11" fill="#4CAF50"/>
+                                <path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z" fill="white"/>
+                            </svg>
+                            <span>Token created successfully!</span>
+                        </div>
+                        
+                        <div class="deployment-details">
+                            <div class="detail-item">
+                                <span class="detail-label">Contract Address:</span>
+                                <span class="detail-value" id="deployed-contract-address">0x0000000000000000000000000000000000000000</span>
+                                <button class="copy-button" onclick="copyToClipboard(document.getElementById('deployed-contract-address').textContent)">Copy</button>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Transaction Hash:</span>
+                                <span class="detail-value" id="deployed-tx-hash">0x0000000000000000000000000000000000000000000000000000000000000000</span>
+                                <button class="copy-button" onclick="copyToClipboard(document.getElementById('deployed-tx-hash').textContent)">Copy</button>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Network:</span>
+                                <span class="detail-value" id="deployed-network">Filecoin Mainnet</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="result-section" class="hidden">
+                <h2>Your ERC-20 Smart Contract</h2>
+                <div class="token-preview-result">
+                    <div id="result-logo-container"></div>
+                    <div>
+                        <h3 id="result-token-name">My Token</h3>
+                        <p id="result-token-symbol">MTK</p>
+                    </div>
+                </div>
+                <div class="code-container">
+                    <pre id="contract-code"></pre>
+                    <button id="copy-code">Copy Code</button>
+                </div>
+                
+                <div id="remix-container" style="width: 100%; height: 600px; margin-top: 20px; border: 1px solid #ddd;"></div>
+                
+                <div class="deployment-steps">
+                    <h3>Deployment Steps</h3>
+                </div>
+                <button id="back-button">Back to Form</button>
+                <button id="deploy-vm-button">Deploy to VM Simulator</button>
+                <button id="open-in-remix" class="remix-button">Deploy with Remix IDE</button>
+            </div>
+            
+            <div id="vm-section" class="hidden">
+                <h2>Virtual Machine Simulation</h2>
+                <div class="vm-status">
+                    <div class="vm-indicator active">
+                        <div class="vm-status-light"></div>
+                        <span>VM Running</span>
+                    </div>
+                    <div class="vm-info">
+                        <p><strong>Network:</strong> <span id="vm-network">Filecoin VM Simulation</span></p>
+                        <p><strong>Gas Price:</strong> <span id="vm-gas">1.5 nanoFIL</span></p>
+                        <p><strong>Block Height:</strong> <span id="vm-block">0</span></p>
+                    </div>
+                </div>
+                
+                <div class="deployment-progress">
+                    <h3>Deployment Progress</h3>
+                    <div class="progress-container">
+                        <div class="progress-bar" id="deployment-progress-bar"></div>
+                    </div>
+                    <div id="deployment-status">Initializing VM environment...</div>
+                </div>
+                
+                <div id="deployment-result" class="hidden">
+                    <div class="success-banner">
+                        <svg class="success-icon" viewBox="0 0 24 24" width="24" height="24">
+                            <circle cx="12" cy="12" r="11" fill="#4CAF50"/>
+                            <path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z" fill="white"/>
+                        </svg>
+                        <span>Contract deployed successfully!</span>
+                    </div>
+                    
+                    <div class="deployment-details">
+                        <div class="detail-item">
+                            <span class="detail-label">Contract Address:</span>
+                            <span class="detail-value" id="contract-address">0x0000000000000000000000000000000000000000</span>
+                            <button class="copy-button" id="copy-address">Copy</button>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Transaction Hash:</span>
+                            <span class="detail-value" id="tx-hash">0x0000000000000000000000000000000000000000000000000000000000000000</span>
+                            <button class="copy-button" id="copy-tx">Copy</button>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Gas Used:</span>
+                            <span class="detail-value" id="gas-used">0</span>
+                        </div>
+                    </div>
+                    
+                    <div class="vm-interactions">
+                        <h3>Contract Interactions</h3>
+                        <div class="token-card">
+                            <div class="token-card-logo" id="token-card-logo"></div>
+                            <div class="token-card-info">
+                                <div class="token-card-balance" id="owner-balance">0</div>
+                                <div>Your Balance</div>
+                                <div class="token-card-address" id="owner-display-address">0x0000...0000</div>
+                            </div>
+                            <div class="token-card-supply">
+                                <div>Total Supply</div>
+                                <div id="total-supply-display">0</div>
+                            </div>
+                        </div>
+                        
+                        <div class="interaction-form">
+                            <div class="form-group">
+                                <label for="interaction-method">Method:</label>
+                                <select id="interaction-method">
+                                    <option value="balanceOf">balanceOf</option>
+                                    <option value="transfer">transfer</option>
+                                    <option value="mint">mint (owner only)</option>
+                                    <option value="burn">burn</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="address-param-group">
+                                <label for="address-param">Address:</label>
+                                <input type="text" id="address-param" placeholder="0x...">
+                            </div>
+                            <div class="form-group" id="amount-param-group">
+                                <label for="amount-param">Amount:</label>
+                                <input type="number" id="amount-param" placeholder="0">
+                            </div>
+                            <button id="execute-interaction">Execute</button>
+                        </div>
+                        <div id="interaction-result" class="hidden">
+                            <h4>Result:</h4>
+                            <pre id="interaction-output"></pre>
+                        </div>
+                        
+                        <div id="transaction-history" class="transaction-history hidden">
+                            <h3>Transaction History</h3>
+                            <div id="transaction-history-container"></div>
+                        </div>
+                        
+                        <div class="debug-mode-toggle">
+                            <span>Debug Mode</span>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="debug-toggle">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        
+                        <div id="debug-panel" class="debug-panel hidden"></div>
+                    </div>
+                    
+                    <button id="vm-back-button">Back to Contract</button>
+                </div>
+            </div>
+            
+            <div class="docs-section">
+                <h2>About Filecoin ERC-20 Tokens</h2>
+                <p>Create standard ERC-20 tokens on Filecoin's EVM compatible networks. These tokens follow the <a href="https://eips.ethereum.org/EIPS/eip-20" target="_blank">ERC-20 standard</a> and work with any compatible wallet.</p>
+                
+                <h3>Available Networks</h3>
+                <div class="network-grid">
+                    <div class="network-card">
+                        <h4>Filecoin Mainnet</h4>
+                        <p>Chain ID: 314</p>
+                        <p>RPC URL: https://api.node.glif.io/rpc/v1</p>
+                    </div>
+                    <div class="network-card">
+                        <h4>Calibration Testnet</h4>
+                        <p>Chain ID: 314159</p>
+                        <p>RPC URL: https://api.calibration.node.glif.io/rpc/v1</p>
+                    </div>
+                </div>
+                
+                <div class="resources">
+                    <h3>Resources</h3>
+                    <ul>
+                        <li><a href="https://docs.filecoin.io/smart-contracts/fundamentals/erc-20-quickstart" target="_blank">Filecoin ERC-20 Docs</a></li>
+                        <li><a href="https://docs.openzeppelin.com/contracts/4.x/erc20" target="_blank">OpenZeppelin ERC-20 Guide</a></li>
+                        <li><a href="https://remix.ethereum.org/" target="_blank">Remix IDE</a></li>
+                        <li><a href="https://filscan.io/" target="_blank">FilScan Explorer</a></li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="footer">
+                <p>This tool helps you create ERC-20 tokens compatible with Filecoin EVM.</p>
+                <p>For more information, visit <a href="https://docs.filecoin.io/smart-contracts/fundamentals/erc-20-quickstart" target="_blank">Filecoin Smart Contracts Documentation</a></p>
+            </div>
+        </div>
+        
+        <script src="contract-generator.js"></script>
+        <script src="vm-simulator.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/web3@1.9.0/dist/web3.min.js"></script>
+    </body>
+</html>
