@@ -1,0 +1,271 @@
+<head>
+    <script src="https://cdn.ethers.io/lib/ethers.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/remix-ide@latest/dist/remix-ide.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remix-ide@latest/dist/css/remix-ide.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remix-ide@latest/dist/css/theme/dark-theme.css">
+</head>
+
+<body>
+    <script type="module">
+        import { ethers } from 'https://cdn.ethers.io/lib/ethers-5.2.esm.min.js';
+
+        class FilecoinWalletConnection {
+            constructor() {
+                this.provider = null;
+                this.signer = null;
+                this.account = null;
+            }
+
+            async connectWallet() {
+                try {
+                    // Comprehensive Filecoin wallet connection
+                    if (typeof window.ethereum === 'undefined') {
+                        this.handleWalletNotDetected();
+                        return null;
+                    }
+
+                    // Request accounts with Filecoin-specific handling
+                    const accounts = await this.requestFilecoinAccounts();
+                    
+                    if (!accounts || accounts.length === 0) {
+                        throw new Error('No Filecoin accounts retrieved');
+                    }
+
+                    this.account = accounts[0];
+                    
+                    // Attempt to switch to Filecoin network
+                    await this.switchToFilecoinNetwork();
+
+                    // Create ethers provider and signer
+                    this.provider = new ethers.providers.Web3Provider(window.ethereum);
+                    this.signer = this.provider.getSigner();
+
+                    // Update UI with connection status
+                    this.updateWalletStatus();
+
+                    // Log connection details to console
+                    console.log(` Connected to Filecoin: ${this.account}`);
+                    console.log(` Network: ${await this.signer.getChainId()}`);
+
+                    return this.account;
+
+                } catch (error) {
+                    this.handleConnectionError(error);
+                    return null;
+                }
+            }
+
+            async requestFilecoinAccounts() {
+                try {
+                    // Comprehensive account request methods for Filecoin
+                    const methods = [
+                        'eth_requestAccounts',
+                        'wallet_requestPermissions',
+                        'eth_accounts'
+                    ];
+
+                    for (const method of methods) {
+                        try {
+                            const accounts = await window.ethereum.request({ 
+                                method: method,
+                                params: method === 'wallet_requestPermissions' ? [{ eth_accounts: {} }] : []
+                            });
+                            
+                            const validAccounts = Array.isArray(accounts) 
+                                ? accounts 
+                                : (accounts.result ? accounts.result : []);
+                            
+                            if (validAccounts.length > 0) {
+                                return validAccounts;
+                            }
+                        } catch (err) {
+                            console.warn(`Method ${method} failed:`, err);
+                        }
+                    }
+
+                    throw new Error('No compatible account retrieval method');
+
+                } catch (error) {
+                    console.error('Filecoin account retrieval failed:', error);
+                    throw error;
+                }
+            }
+
+            async switchToFilecoinNetwork() {
+                const filecoinNetworks = {
+                    mainnet: {
+                        chainId: '0x13A',  // 314 in hex
+                        chainName: 'Filecoin Mainnet',
+                        nativeCurrency: {
+                            name: 'FIL',
+                            symbol: 'FIL',
+                            decimals: 18
+                        },
+                        rpcUrls: [
+                            'https://api.node.glif.io/rpc/v1',
+                            'https://filecoin-mainnet.chainup.net/rpc/v1'
+                        ],
+                        blockExplorerUrls: ['https://filscan.io/']
+                    },
+                    calibration: {
+                        chainId: '0x4CB',  // 314159 in hex
+                        chainName: 'Filecoin Calibration Testnet',
+                        nativeCurrency: {
+                            name: 'tFIL',
+                            symbol: 'tFIL',
+                            decimals: 18
+                        },
+                        rpcUrls: [
+                            'https://api.calibration.node.glif.io/rpc/v1',
+                            'https://filecoin-calibration.chainup.net/rpc/v1'
+                        ],
+                        blockExplorerUrls: ['https://calibration.filscan.io/']
+                    }
+                };
+
+                const selectedNetwork = document.getElementById('deployment-network').value || 'calibration';
+                const networkParams = filecoinNetworks[selectedNetwork];
+
+                try {
+                    // Try to switch to the network
+                    await window.ethereum.request({
+                        method: 'wallet_switchEthereumChain',
+                        params: [{ chainId: networkParams.chainId }]
+                    });
+                } catch (switchError) {
+                    // If the chain hasn't been added, add it
+                    if (switchError.code === 4902) {
+                        try {
+                            await window.ethereum.request({
+                                method: 'wallet_addEthereumChain',
+                                params: [networkParams]
+                            });
+                        } catch (addError) {
+                            console.error('Failed to add Filecoin network:', addError);
+                            throw addError;
+                        }
+                    } else {
+                        console.error('Network switch failed:', switchError);
+                        throw switchError;
+                    }
+                }
+            }
+
+            handleWalletNotDetected() {
+                const message = 'Filecoin wallet not detected. Install MetaMask with Filecoin support.';
+                alert(message);
+                this.updateWalletStatus(message);
+                
+                // Open installation guides
+                window.open('https://metamask.io/download/', '_blank');
+                window.open('https://docs.filecoin.io/smart-contracts/developing-contracts/metamask', '_blank');
+            }
+
+            handleConnectionError(error) {
+                const errorMessages = {
+                    4001: 'Connection rejected by user',
+                    '-32002': 'Connection request in progress',
+                    default: 'Filecoin wallet connection failed'
+                };
+
+                const errorMessage = errorMessages[error.code] || errorMessages.default;
+                this.updateWalletStatus(errorMessage);
+                
+                console.error(` Wallet Connection Error: ${errorMessage}`);
+                console.error(` Troubleshooting steps:
+                    - Ensure MetaMask is updated
+                    - Check Filecoin network settings
+                    - Verify account permissions`);
+            }
+
+            updateWalletStatus(errorMessage = null) {
+                const walletStatus = document.getElementById('wallet-status');
+                const connectButton = document.getElementById('connect-wallet-button');
+                const createTokenButton = document.getElementById('create-token-button');
+                const ownerAddressInput = document.getElementById('owner-address');
+
+                if (this.account) {
+                    walletStatus.textContent = `Connected: ${this.shortenAddress(this.account)}`;
+                    walletStatus.classList.add('connected');
+                    connectButton.textContent = 'Connected to Filecoin';
+                    connectButton.disabled = true;
+                    createTokenButton.classList.remove('hidden');
+                    ownerAddressInput.value = this.account;
+                } else {
+                    walletStatus.textContent = errorMessage || 'Not connected to Filecoin';
+                    walletStatus.classList.remove('connected');
+                    connectButton.textContent = 'Connect Filecoin Wallet';
+                    connectButton.disabled = false;
+                    createTokenButton.classList.add('hidden');
+                    ownerAddressInput.value = '';
+                }
+            }
+
+            shortenAddress(address) {
+                return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+            }
+
+            async setupListeners() {
+                if (window.ethereum) {
+                    window.ethereum.on('accountsChanged', async (accounts) => {
+                        console.log(' Accounts changed:', accounts);
+                        if (accounts.length > 0) {
+                            this.account = accounts[0];
+                            await this.connectWallet();
+                        } else {
+                            this.updateWalletStatus('Wallet disconnected');
+                        }
+                    });
+
+                    window.ethereum.on('chainChanged', (chainId) => {
+                        console.log(' Network changed:', chainId);
+                        window.location.reload();
+                    });
+                }
+            }
+
+            async checkInitialConnection() {
+                if (window.ethereum) {
+                    try {
+                        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+                        if (accounts.length > 0) {
+                            this.account = accounts[0];
+                            await this.connectWallet();
+                        }
+                    } catch (error) {
+                        console.error('Initial connection check failed:', error);
+                    }
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const walletConnection = new FilecoinWalletConnection();
+            
+            const connectButton = document.getElementById('connect-wallet-button');
+            connectButton.addEventListener('click', async () => {
+                try {
+                    await walletConnection.connectWallet();
+                } catch (error) {
+                    console.error('Connection attempt failed:', error);
+                }
+            });
+
+            walletConnection.checkInitialConnection();
+            walletConnection.setupListeners();
+
+            // Expose methods globally if needed
+            window.walletConnection = walletConnection;
+        });
+    </script>
+
+    <script src="contract-generator.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/remix-ide@latest/dist/remix-ide.min.js"></script>
+
+    <div id="remix-container" class="remix-container"></div>
+
+    <div id="result-section" class="hidden">
+        <h2>Your ERC-20 Smart Contract</h2>
+        <div id="remix-container" class="remix-container"></div>
+    </div>
+</body>
